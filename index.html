@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لهجتي</title>
+<style>
+  :root { --g1:#0b6e4f; --g2:#14a37f; --ink:#111; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Segoe UI", Tahoma, Arial, sans-serif; color:var(--ink);
+         background: linear-gradient(160deg,#f0f7f4 0%,#e3efe9 100%); min-height:100vh; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  header { background: linear-gradient(135deg,var(--g1),var(--g2)); color:#fff; padding:22px 26px;
+           border-radius:18px; margin-bottom:14px; box-shadow:0 6px 18px rgba(11,110,79,.25); }
+  header h1 { margin:0 0 6px; font-size:28px; }
+  header p { margin:0; opacity:.95; }
+  .card { background:#fff; border-radius:16px; padding:16px 20px; box-shadow:0 2px 10px rgba(0,0,0,.07); margin-bottom:12px; color:#111; }
+  #understand { border-right:6px solid var(--g1); line-height:1.9; }
+  #reply { border-right:6px solid #f4a62a; font-size:18px; line-height:1.8; }
+  h3 { color:#0b3d2e; margin:14px 4px 8px; }
+  textarea { width:100%; font-size:18px; padding:12px; border:1px solid #cfd8d4; border-radius:12px;
+             font-family:inherit; resize:vertical; }
+  button { font-family:inherit; font-size:17px; border:0; border-radius:12px; padding:11px 20px; cursor:pointer; color:#fff; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #send { background:var(--g1); margin-top:10px; }
+  #yes { background:var(--g2); }
+  #no { background:#d64545; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .chip { background:#eaf4f0; color:#0b3d2e; border:1px solid #cfe5dc; padding:8px 14px; font-size:15px; }
+  #status { font-size:14px; color:#555; margin-top:8px; }
+  .row { display:flex; gap:10px; margin-top:6px; }
+  .hidden { display:none; }
+  footer { text-align:center; color:#666; font-size:13px; margin:18px 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🎙️ لهجتي</h1>
+    <p>مساعد بنكي يسمع لهجتك ويفهم طلبك ثم ينفّذه</p>
+  </header>
+
+  <div class="card">
+    <label for="box"><strong>اكتب طلبك بلهجتك</strong></label>
+    <textarea id="box" rows="2" placeholder="مثال: ابي احول لأبوي خمسمية"></textarea>
+    <div class="chips" id="chips"></div>
+    <button id="send" disabled>أرسل ➤</button>
+    <div id="status">جاري تحميل النموذج… (أول مرة قد تستغرق دقيقة)</div>
+  </div>
+
+  <div id="results" class="hidden">
+    <h3>👂 Listen &amp; Understand</h3>
+    <div id="understand" class="card"></div>
+    <h3>⚙️ Execute</h3>
+    <div id="reply" class="card"></div>
+    <div id="confirmRow" class="row hidden">
+      <button id="yes">✅ نعم، نفّذ</button>
+      <button id="no">✖ لا، إلغاء</button>
+    </div>
+  </div>
+
+  <footer>نموذج أولي لأغراض تعليمية — الحساب والأرصدة وهمية، ولا يوجد ربط ببنك حقيقي.</footer>
+</main>
+
+<script type="module">
+// ===== إعدادات =====
+const MODEL_ID = "kadi4655/lahjti-intent";
+const NAMES = ["balance", "block_card", "expenses", "fees", "out_of_scope", "transfer"];
+const THRESHOLD = 0.60;
+
+// ===== تطبيع وتحديد اللهجة =====
+function normalizeArabic(t) {
+  return String(t).replace(/[ً-ْـ]/g, "")
+    .replace(/[إأآا]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+}
+const LEXICON = {
+  najdi:   ["وش", "ابغى", "ابي", "الحين", "للحين", "ليه", "شلون", "وين"],
+  hijazi:  ["ايش", "دحين", "كدا", "ليش", "لسا", "ايوا"],
+  qassimi: ["توه", "توني", "عاد", "وراه"],
+  msa:     ["أرغب", "لماذا", "هل", "أريد", "أود", "يرجى"],
+};
+const LEX = {};
+for (const [d, ws] of Object.entries(LEXICON)) LEX[d] = new Set(ws.map(normalizeArabic));
+
+export function identify(text) {
+  const words = new Set(normalizeArabic(text).replace(/[؟?.,!،]/g, " ").split(/\s+/).filter(Boolean));
+  const scores = {};
+  for (const [d, lex] of Object.entries(LEX)) scores[d] = [...words].filter(w => lex.has(w)).length;
+  const best = Math.max(...Object.values(scores));
+  if (best === 0) return "unknown";
+  const winners = Object.keys(scores).filter(d => scores[d] === best);
+  return winners.length === 1 ? winners[0] : "ambiguous";
+}
+
+// ===== استخراج المبلغ والمستفيد =====
+const BENEFICIARIES = {
+  "أبوي": ["ابوي", "والدي"], "أمي": ["امي", "والدتي"],
+  "أخوي": ["اخوي", "اخي"], "محمد العتيبي": ["محمد"],
+};
+const BEN_KEYS = {};
+for (const [n, ks] of Object.entries(BENEFICIARIES)) BEN_KEYS[n] = [...ks, n].map(normalizeArabic);
+
+const WORD_AMOUNTS_RAW = {
+  "مية":100,"ميه":100,"مئة":100,"مائة":100,"مئتين":200,"ميتين":200,"مئتي":200,
+  "ثلاثمية":300,"ثلاثمئة":300,"تلتمية":300,"ثلاثمائة":300,"اربعمية":400,"اربعمئة":400,
+  "خمسمية":500,"خمسمئة":500,"ستمية":600,"سبعمية":700,"ثمانمية":800,"تسعمية":900,
+  "الف":1000,"الفين":2000,
+};
+const WORD_AMOUNTS = {};
+for (const [k, v] of Object.entries(WORD_AMOUNTS_RAW)) WORD_AMOUNTS[normalizeArabic(k)] = v;
+
+export function extractAmount(text) {
+  const t = normalizeArabic(text).trim().replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
+  const m = t.match(/\d+(?:\.\d+)?/);
+  if (m) return parseFloat(m[0]);
+  const keys = Object.keys(WORD_AMOUNTS).sort((a, b) => b.length - a.length);
+  for (const w of keys) if (t.includes(w)) return WORD_AMOUNTS[w];
+  return null;
+}
+export function extractBeneficiary(text) {
+  const t = normalizeArabic(text).trim();
+  for (const [name, keys] of Object.entries(BEN_KEYS)) if (keys.some(k => t.includes(k))) return name;
+  return null;
+}
+
+// ===== النموذج =====
+let classify = null;
+async function loadClassifier() {
+  if (window.__CLASSIFIER__) return window.__CLASSIFIER__;
+  const { pipeline, env } = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0");
+  env.allowLocalModels = false;
+  const pipe = await pipeline("text-classification", MODEL_ID, { dtype: "q8" });
+  return async (text) => {
+    let out = await pipe(text, { top_k: 1 });
+    if (Array.isArray(out)) out = out[0];
+    const m = /^LABEL_(\d+)$/.exec(out.label);
+    const intent = m ? NAMES[parseInt(m[1], 10)] : out.label;
+    return [intent, Math.round(out.score * 1000) / 1000];
+  };
+}
+
+// ===== المنطق =====
+const fmt = n => Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
+const state = { balance: 5000, pending: null };
+
+async function processText(text) {
+  state.pending = null;
+  const dialect = identify(text);
+  const [intent, conf] = await classify(text);
+  const amount = extractAmount(text), ben = extractBeneficiary(text);
+  const understand =
+    `**اللهجة:** ${dialect}\n**النية:** ${intent} (ثقة ${conf})\n` +
+    `**المبلغ:** ${amount ? amount : "—"}\n**المستفيد:** ${ben ? ben : "—"}`;
+  if (conf < THRESHOLD) return { understand, reply: "ما فهمت طلبك، ممكن توضّح أكثر؟", confirm: false };
+  if (intent === "balance") return { understand, reply: `رصيدك الحالي: **${fmt(state.balance)} ريال**`, confirm: false };
+  if (intent === "transfer") {
+    if (amount === null) return { understand, reply: "كم المبلغ اللي تبي تحوّله؟", confirm: false };
+    if (ben === null) return { understand, reply: "لمن تبي تحوّل؟ (أبوي، أمي، أخوي، محمد العتيبي)", confirm: false };
+    if (amount > state.balance) return { understand, reply: `الرصيد ما يكفي. رصيدك ${fmt(state.balance)} ريال.`, confirm: false };
+    state.pending = { amount, to: ben };
+    return { understand, reply: `تأكيد: تحويل **${fmt(amount)} ريال** إلى **${ben}**؟`, confirm: true };
+  }
+  if (intent === "out_of_scope") return { understand, reply: "هذا الطلب خارج نطاق الخدمات البنكية.", confirm: false };
+  return { understand, reply: "هذي الخدمة غير متاحة حالياً. المتاح: الرصيد والتحويل.", confirm: false };
+}
+function confirmTransfer(yes) {
+  const p = state.pending; state.pending = null;
+  if (!p) return "ما فيه عملية للتأكيد.";
+  if (!yes) return "تم إلغاء التحويل.";
+  state.balance -= p.amount;
+  return `✅ تم تحويل ${fmt(p.amount)} ريال إلى ${p.to}.\nرصيدك الجديد: ${fmt(state.balance)} ريال`;
+}
+
+// ===== الواجهة =====
+const $ = id => document.getElementById(id);
+function md(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>");
+}
+const EXAMPLES = ["وش رصيدي الحين", "ابي احول لأبوي خمسمية", "أبغى أحول لأخوي تلتمية", "ابغى احول لأمي ألف ريال"];
+for (const ex of EXAMPLES) {
+  const b = document.createElement("button"); b.className = "chip"; b.textContent = ex;
+  b.onclick = () => { $("box").value = ex; $("box").focus(); };
+  $("chips").appendChild(b);
+}
+async function send() {
+  const text = $("box").value.trim();
+  if (!text) return;
+  $("send").disabled = true;
+  try {
+    const r = await processText(text);
+    $("understand").innerHTML = md(r.understand);
+    $("reply").innerHTML = md(r.reply);
+    $("results").classList.remove("hidden");
+    $("confirmRow").classList.toggle("hidden", !r.confirm);
+  } finally { $("send").disabled = false; }
+}
+function answer(yes) {
+  $("reply").innerHTML = md(confirmTransfer(yes));
+  $("confirmRow").classList.add("hidden");
+}
+$("send").onclick = send;
+$("box").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("yes").onclick = () => answer(true);
+$("no").onclick = () => answer(false);
+
+try {
+  classify = await loadClassifier();
+  $("status").textContent = "النموذج جاهز ✔";
+  $("send").disabled = false;
+} catch (e) {
+  console.error(e);
+  $("status").textContent = "تعذّر تحميل النموذج. حدّثي الصفحة وحاولي مرة ثانية.";
+}
+</script>
+</body>
+</html>
