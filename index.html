@@ -129,7 +129,7 @@ async function loadClassifier() {
   if (window.__CLASSIFIER__) return window.__CLASSIFIER__;
   const { pipeline, env } = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0");
   env.allowLocalModels = false;
-  const pipe = await pipeline("text-classification", MODEL_ID, { dtype: "q8" });
+  const pipe = await pipeline("text-classification", MODEL_ID, { dtype: "q4" });
   return async (text) => {
     let out = await pipe(text, { top_k: 1 });
     if (Array.isArray(out)) out = out[0];
